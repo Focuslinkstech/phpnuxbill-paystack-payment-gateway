@@ -1,6 +1,6 @@
 # Phpnuxbill Paystack Payment Gateway
 
-Paystack is a Nigerian fintech company that provides payment infrastructure for global merchants and payment service providers across the African country and the world.
+Paystack is a fintech company that provides payment infrastructure for global merchants and payment service providers across the African country and the world.
 ## Supported Country
 Nigeria,
 Ghana,
