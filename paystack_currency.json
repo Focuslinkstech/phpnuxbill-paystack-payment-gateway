@@ -7,5 +7,19 @@
 	{
 		"id": "GHC",
 		"name": "Ghana Cedis"
+	},
+	{
+		"id": "KES",
+		"name": "Kenyan Shilling"
+	},
+	{
+		"id": "ZAR",
+		"name": "South African Rand"
+	},
+	{
+		"id": "USD",
+		"name": "United States Dollar"
 	}
+	
+	
 ]
