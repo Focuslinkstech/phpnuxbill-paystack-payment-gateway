@@ -131,33 +131,7 @@ if ($result['status'] == false) {
 
 function paystack_payment_notification()
 {
-  global $config;
-
-if(isset($_GET['status']))
-
-  {
-    $txid = $_GET['transaction_id'];
-    $txref = $_GET['trxref'];
-        //* check payment status
-      if($_GET['status'] == 'cancelled')
-      {
-      // die(json_encode($txref,JSON_PRETTY_PRINT));
-        Message::sendTelegram("paystack Payment Cancelled: \n\n");
-        r2(U . 'order/package', 'e', Lang::T("paystack Payment Cancelled."));
-    }
-      elseif($_GET['status'] == 'successful')
-      {
-        $d = ORM::for_table('tbl_payment_gateway')
-        ->where('username', $user['username'])
-        ->where('status', 1)
-        ->find_one();
-        $d->gateway_trx_id = implode($_GET['transaction_id']);
-        $d->save();
-        r2(U . 'order/package', 's', Lang::T("paystack Payment Completed."));
-        exit();
-
-     }
-   }
+  //to be implemented
  }
 
  function paystack_get_status($trx, $user)
