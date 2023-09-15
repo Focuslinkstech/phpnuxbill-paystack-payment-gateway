@@ -166,7 +166,7 @@ function paystack_payment_notification()
 } else if ($trx['status'] == 2) {
   r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Transaction has been paid.."));
 }else{
-  Message::sendTelegram("flutterwave_get_status: unknown result\n\n".json_encode($result, JSON_PRETTY_PRINT));
+  Message::sendTelegram("paystack_get_status: unknown result\n\n".json_encode($result, JSON_PRETTY_PRINT));
   r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Unknown Command."));
 }
 
