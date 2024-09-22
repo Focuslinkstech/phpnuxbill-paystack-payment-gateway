@@ -66,8 +66,8 @@ function paystack_create_transaction($trx, $user)
     global $config;
 
     $txref = uniqid('trx');
-    $total = $trx['price'] * 100; 
-    
+    $total = $trx['price'] * 100;
+
     $json = [
         'reference' => $txref,
         'amount' => $total,
@@ -75,10 +75,10 @@ function paystack_create_transaction($trx, $user)
         'channels' => explode(',', $config['paystack_channel']),
         'email' => !empty($user['email']) ? $user['email'] : $user['username'] . '@' . $_SERVER['HTTP_HOST'],
         'customer' => [
-            'firstname' => $user['fullname'],
+            'first_name' => $user['fullname'],
             'phone' => $user['phonenumber']
         ],
-        'meta' => [
+        'metadata' => [
             'price' => $trx['price'],
             'userid' => $user['id'],
             'planid' => $trx['plan_id'],
@@ -88,7 +88,7 @@ function paystack_create_transaction($trx, $user)
             'title' => $trx['plan_name'],
             'description' => $trx['plan_name']
         ],
-        'callback_url' => U . 'order/view/' . $trx['id'] . '/trx'
+        'callback_url' => U . 'order/view/' . $trx['id'] . '/check'
     ];
 
     $response = Http::postJsonData(
@@ -129,8 +129,6 @@ function paystack_create_transaction($trx, $user)
     header('Location: ' . $result['data']['authorization_url']);
     exit();
 }
-
-
 function paystack_payment_notification()
 {
     global $config;
@@ -144,20 +142,23 @@ function paystack_payment_notification()
     }
 
     $paymentDetails = @file_get_contents("php://input");
-    $headers = getallheaders();
-    file_put_contents("pages/paystack-webhook.html", "<pre>$paymentDetails</pre>", FILE_APPEND);
-    file_put_contents("pages/paystack-webhook-headers.html", "<pre>" . json_encode($headers) . "</pre>", FILE_APPEND);
+    file_put_contents("pages/paystack-webhook.html", date('Y-m-d H:i:s') . "<pre>$paymentDetails</pre>", FILE_APPEND);
 
     define('PAYSTACK_SECRET_KEY', $config['paystack_secret_key']);
 
-    if (!isset($_SERVER['HTTP_X_PAYSTACK_SIGNATURE']) ||
-        $_SERVER['HTTP_X_PAYSTACK_SIGNATURE'] !== hash_hmac('sha512', $paymentDetails, PAYSTACK_SECRET_KEY)) {
-        http_response_code(403); 
+    // Validate webhook signature
+    if (
+        !isset($_SERVER['HTTP_X_PAYSTACK_SIGNATURE']) ||
+        $_SERVER['HTTP_X_PAYSTACK_SIGNATURE'] !== hash_hmac('sha512', $paymentDetails, PAYSTACK_SECRET_KEY)
+    ) {
+        http_response_code(403);
         echo json_encode(['error' => 'Invalid signature']);
         exit();
     }
 
     http_response_code(200);
+
+    sleep(20);
 
     // Decode the event payload
     $event = json_decode($paymentDetails);
@@ -173,58 +174,55 @@ function paystack_payment_notification()
     $gateway_response = $event->data->gateway_response;
     $channel = $event->data->channel;
 
-    // Accessing metadata values
+    // Access metadata
     $metadata = $event->data->metadata ?? new stdClass();
     $routername = $metadata->router ?? '';
     $planid = $metadata->planid ?? '';
     $userid = $metadata->userid ?? '';
     $amountToPay = $metadata->price ?? '';
 
-    // Handle missing reference
     if (!$reference) {
         sendTelegram(Lang::T("No reference supplied from webhook"));
         exit();
     }
 
-    // Fetch the transaction
     $trx = ORM::for_table('tbl_payment_gateway')
         ->where('gateway_trx_id', $reference)
         ->find_one();
 
     if (!$trx) {
         _log("Transaction with reference $reference not found.");
-        http_response_code(404); 
+        http_response_code(404);
         exit();
     }
 
     if (in_array($trx->status, ['2', '3', '4'])) {
+        _log("Paystact Payment Webhook Reports: Transaction with reference $reference already processed.");
         exit();
     }
 
-    sleep(10);
-
     if ($status === 'success' && $amount >= $amountToPay) {
         if (!Package::rechargeUser($userid, $routername, $planid, 'PAYSTACK', $channel)) {
-            _log('[' . Lang::T("Failed to activate their package, try again later.") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
-            sendTelegram('[' . Lang::T("Failed to activate their package, try again later.") . ']: Paystack Payment Webhook Reports: ' . "\n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
+            _log('[' . Lang::T("Failed to activate the package, try again later.") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
+            sendTelegram('[' . Lang::T("Failed to activate the package, try again later.") . ']: Paystack Payment Webhook Reports: ' . "\n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
         } else {
             paystack_payment_notificationupdateTransaction($trx, 2, $event, $channel, $gateway_response);
             sendTelegram('[' . Lang::T("Success") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
             _log('[' . Lang::T("Notification") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
         }
-    }
-    // Handle failed payment
-    elseif ($status === 'failed') {
+    } elseif ($status === 'failed') {
         paystack_payment_notificationupdateTransaction($trx, 4, $event, $channel, $gateway_response);
         _log('[' . Lang::T("Notification") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
         sendTelegram("Paystack Payment Status: " . $status . "\n\n" . json_encode($event, JSON_PRETTY_PRINT));
-    }
-    elseif ($status === 'abandoned') {
+    } elseif ($status === 'abandoned') {
         paystack_payment_notificationupdateTransaction($trx, 4, $event, $channel, $gateway_response);
         _log('[' . Lang::T("Notification") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
         sendTelegram("Paystack Payment Status: " . $status . "\n\n" . json_encode($event, JSON_PRETTY_PRINT));
-    }
-    else {
+    } elseif ($status === 'ongoing') {
+        paystack_payment_notificationupdateTransaction($trx, 1, $event, $channel, $gateway_response);
+        _log('[' . Lang::T("Notification") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
+        sendTelegram("Paystack Payment Status: " . $status . "\n\n" . json_encode($event, JSON_PRETTY_PRINT));
+    } else {
         _log('[' . Lang::T("Notification") . ']: Paystack Payment Webhook Reports: ' . " \n Payment Status: " . $status . " \n Payment Confirmation: " . $gateway_response . " \n API Response:\n" . json_encode($event));
         sendTelegram("Paystack Webhook: Unknown result\n\n" . json_encode($event, JSON_PRETTY_PRINT));
     }
@@ -235,73 +233,65 @@ function paystack_payment_notification()
         $trx->payment_method = 'Paystack';
         $trx->payment_channel = $channel;
         $trx->paid_date = date('Y-m-d H:i:s', strtotime($event->data->created_at));
-        $trx->status = $status; 
+        $trx->status = $status;
         $trx->save();
     }
 }
-
-
-function paystack_get_status($trx, $user)
+function paystack_get_status($transaction, $user)
 {
     global $config;
 
-    $response = Http::getData('https://api.paystack.co/transaction/verify/' . $trx['gateway_trx_id'], [
+    $result = json_decode(Http::getData('https://api.paystack.co/transaction/verify/' . $transaction['gateway_trx_id'], [
         'Authorization: Bearer ' . $config['paystack_secret_key'],
         'Cache-Control: no-cache'
-    ]);
-    
-    $result = json_decode($response, true);
+    ]), true);
 
-    if (!$result || !isset($result['data'])) {
-        r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Invalid response from Paystack."));
+    if (!$result || !isset($result['status'])) {
+        r2(U . "order/view/" . $transaction['id'], 'd', Lang::T("Unable to verify the transaction, try again later."));
         return;
     }
 
-    $data = $result['data'];
-    $amountPaid = $data['amount'] / 100; 
-    $amountToPay = $data['requested_amount'];
-    $status = $data['status'];
-    $gatewayResponse = $data['gateway_response'];
+    $sanitizedResult = [
+        'status' => filter_var($result['status'], FILTER_VALIDATE_BOOLEAN),
+        'data' => [
+            'amount' => filter_var($result['data']['amount'], FILTER_VALIDATE_INT),
+            'requested_amount' => filter_var($result['data']['requested_amount'], FILTER_VALIDATE_INT),
+            'status' => filter_var($result['data']['status'], FILTER_SANITIZE_SPECIAL_CHARS),
+            'channel' => filter_var($result['data']['channel'], FILTER_SANITIZE_SPECIAL_CHARS),
+            'created_at' => filter_var($result['data']['created_at'], FILTER_SANITIZE_SPECIAL_CHARS),
+        ]
+    ];
 
-    if ($status === 'success' && $amountPaid >= $amountToPay &&
-        ($gatewayResponse === 'Successful' || $gatewayResponse === 'Approved' || $gatewayResponse === '[Test] Approved')) {
+    $amountPaid = $sanitizedResult['data']['amount'];
+    $amountToPay = $sanitizedResult['data']['requested_amount'];
 
-        if (!Package::rechargeUser($user['id'], $trx['routers'], $trx['plan_id'], $trx['gateway'], $data['channel'])) {
-            r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Failed to activate your Package, try again later."));
+    if ($sanitizedResult['status'] === true && ($sanitizedResult['data']['status'] === 'abandoned' || $sanitizedResult['data']['status'] === 'failed' || $amountPaid < $amountToPay)) {
+        r2(U . "order/view/" . $transaction['id'], 'w', Lang::T("Transaction still unpaid."));
+    } elseif (in_array($sanitizedResult['data']['status'], ['success']) && $transaction['status'] != 2) {
+
+        if (!Package::rechargeUser($user['id'], $transaction['routers'], $transaction['plan_id'], $transaction['gateway'], $sanitizedResult['data']['channel'])) {
+            _log("Failed to recharge user ID {$user['id']} for transaction ID {$transaction['id']}");
+            r2(U . "order/view/" . $transaction['id'], 'd', Lang::T("Failed to activate your package, try again later."));
         }
 
-        $trx->pg_paid_response = json_encode($result);
-        $trx->payment_method = 'Paystack';
-        $trx->payment_channel = $data['channel'];
-        $trx->paid_date = date('Y-m-d H:i:s', strtotime($data['created_at']));
-        $trx->status = 2; 
-        $trx->save();
+        $transaction->pg_paid_response = json_encode($sanitizedResult);
+        $transaction->payment_method = 'Paystack';
+        $transaction->payment_channel = $sanitizedResult['data']['channel'];
+        $transaction->paid_date = date('Y-m-d H:i:s', strtotime($sanitizedResult['data']['created_at']));
+        $transaction->status = 2;
+        $transaction->save();
 
-        r2(U . "order/view/" . $trx['id'], 's', Lang::T("Transaction Completed Successfully."));
-    }
-
-    else if ($status === 'pending') {
-        $trx->pg_paid_response = json_encode($result);
-        $trx->status = 1; // Pending
-        $trx->save();
-
-        r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Transaction Pending. Please wait for some minutes."));
-    }
-
-    else if ($status === 'failed' || $status === 'canceled') {
-        $trx->pg_paid_response = json_encode($result);
-        $trx->status = 3; // Failed
-        $trx->save();
-
-        r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Transaction Canceled or Failed."));
-    }
-
-    else if ($trx->status == 2) {
-        r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Transaction has already been paid."));
-    }
-
-    else {
-        Message::sendTelegram("paystack_get_status: unknown result\n\n" . json_encode($result, JSON_PRETTY_PRINT));
-        r2(U . "order/view/" . $trx['id'], 'd', Lang::T("Unknown Command."));
+        r2(U . "order/view/" . $transaction['id'], 's', Lang::T("Transaction successful."));
+    } elseif ($sanitizedResult['data']['status'] === 'EXPIRED') {
+        $transaction->pg_paid_response = json_encode($sanitizedResult);
+        $transaction->status = 3;
+        $transaction->save();
+        r2(U . "order/view/" . $transaction['id'], 'd', Lang::T("Transaction expired."));
+    } elseif ($transaction['status'] == 2) {
+        r2(U . "order/view/" . $transaction['id'], 'd', Lang::T("Transaction has already been paid."));
+    } else {
+        // Log unknown status for debugging
+        _log("paystack_get_status: Unknown status\n\n" . json_encode($sanitizedResult, JSON_PRETTY_PRINT));
+        r2(U . "order/view/" . $transaction['id'], 'd', Lang::T("Unknown Command."));
     }
 }
