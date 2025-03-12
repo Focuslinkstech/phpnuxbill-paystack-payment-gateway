@@ -1,15 +1,18 @@
 <?php
 
-
 /**
- * PHP Mikrotik Billing (https://github.com/hotspotbilling/phpnuxbill/)
+ * Bismillahir Rahmanir Raheem
+ * 
+ * PHP Mikrotik Billing (https://github.com/paybilling/phpnuxbill/)
  *
- * Payment Gateway paystack.com
+ *  Paystack Payment Gateway Plugin for PHPNuxBill
  *
- * created by @foculinkstech
+ * @author: Focuslinks Digital Solutions <focuslinkstech@gmail.com>
+ * Website: https://focuslinkstech.com.ng/
+ * GitHub: https://github.com/Focuslinkstech/
+ * Telegram: https://t.me/focuslinkstech/
  *
  **/
-
 
 function paystack_validate_config()
 {
@@ -34,14 +37,8 @@ function paystack_save_config()
 {
     global $admin;
     $paystack_secret_key = _post('paystack_secret_key');
-    $paystack_currency = _post('paystack_currency');
-    $paystack_channel = isset($_POST['paystack_channel']) && is_array($_POST['paystack_channel'])
-        ? $_POST['paystack_channel']
-        : [];
     $settings = [
-        'paystack_secret_key' => $paystack_secret_key,
-        'paystack_currency' => $paystack_currency,
-        'paystack_channel' => implode(',', $paystack_channel)
+        'paystack_secret_key' => $paystack_secret_key
     ];
 
     // Update or insert settings in the database
@@ -71,8 +68,6 @@ function paystack_create_transaction($trx, $user)
     $json = [
         'reference' => $txref,
         'amount' => $total,
-        'currency' => $config['paystack_currency'],
-        'channels' => explode(',', $config['paystack_channel']),
         'email' => !empty($user['email']) ? $user['email'] : $user['username'] . '@' . $_SERVER['HTTP_HOST'],
         'customer' => [
             'first_name' => $user['fullname'],
